@@ -1,0 +1,1 @@
+- [Oliv Brain V2 Architecture](oliv-brain-v2.md) — modular refactor done; Brain singleton, all sheets I/O via run_in_executor, AI-free Router, QualityScore threshold 0.65

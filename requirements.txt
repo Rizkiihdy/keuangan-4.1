@@ -6,3 +6,10 @@ flask
 flask-cors
 gunicorn
 tlgbotfwk
+flask
+flask-cors
+google-auth
+google-genai
+gspread
+gunicorn
+python-telegram-bot

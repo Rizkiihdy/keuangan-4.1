@@ -46,3 +46,11 @@ _Populate as you build — explicit user instructions worth remembering across s
 - The GOOGLE_SERVICE_ACCOUNT_JSON secret may be pasted with trailing commas — the loader in `bot/sheets.py` handles this automatically
 - If the bot shows "409 Conflict", there are two instances running simultaneously — stop one and wait ~30s before restarting
 - Job queue (weekly report scheduler) requires `pip install "python-telegram-bot[job-queue]"` — currently disabled gracefully
+- `fly.toml` has an old `TELEGRAM_TOKEN`/`GEMINI_API_KEY` hardcoded in plaintext (leftover from a Fly.io deployment attempt). It's a different token than the one now in Replit Secrets, so it isn't the current bot, but it's still a leaked credential sitting in the repo — worth rotating/removing if that Fly deployment isn't in active use.
+
+## Setup status (2026-07-11)
+
+- Re-imported from GitHub; Python deps (`python-telegram-bot`, `google-genai`, `gspread`, `google-auth`, `flask`, `flask-cors`, `gunicorn`) installed via the package manager.
+- Secrets configured: `TELEGRAM_TOKEN`, `GEMINI_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` (user-provided), `GOOGLE_SHEET_ID` (was already set).
+- `Telegram Finance Bot` workflow (`cd bot && python bot.py`) runs and polls Telegram successfully.
+- The `.replit` deployment block still points at a `dashboard/` folder and `dashboard_api:app` that don't exist in this repo — leftover from a prior project state. Not touched since deployment wasn't requested; flag before publishing.

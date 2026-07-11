@@ -12,6 +12,7 @@ No business logic lives here. All decisions are Brain's responsibility.
 import os
 import json
 import logging
+import threading
 from datetime import time as dt_time
 
 from telegram import Update
@@ -48,11 +49,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# httpx (used internally by python-telegram-bot) logs the full request URL
+# at INFO level, which includes the bot token — e.g.
+# "POST https://api.telegram.org/bot<TOKEN>/getMe". Silence it to WARNING
+# so the token never lands in logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 if not TELEGRAM_TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN environment variable is not set.")
 
 REGISTRY_FILE = os.path.join(os.path.dirname(__file__), "user_registry.json")
+
+# Guards concurrent read/write of user_registry.json — handlers run on the
+# asyncio loop but registry access can be triggered from multiple update
+# callbacks in quick succession.
+_registry_lock = threading.Lock()
 
 
 # ------------------------------------------------------------------ #
@@ -60,19 +72,21 @@ REGISTRY_FILE = os.path.join(os.path.dirname(__file__), "user_registry.json")
 # ------------------------------------------------------------------ #
 
 def _load_reg() -> dict:
-    try:
-        with open(REGISTRY_FILE) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    with _registry_lock:
+        try:
+            with open(REGISTRY_FILE) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
 
 
 def _save_reg(reg: dict) -> None:
-    try:
-        with open(REGISTRY_FILE, "w") as f:
-            json.dump(reg, f)
-    except Exception as e:
-        logger.error(f"Registry save failed: {e}")
+    with _registry_lock:
+        try:
+            with open(REGISTRY_FILE, "w") as f:
+                json.dump(reg, f)
+        except Exception as e:
+            logger.error(f"Registry save failed: {e}")
 
 
 # ------------------------------------------------------------------ #

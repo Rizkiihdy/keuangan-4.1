@@ -25,7 +25,9 @@ AI is NEVER called directly from handlers.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional, TYPE_CHECKING
@@ -106,6 +108,12 @@ class Brain:
         self._financial = FinancialEngine()
         self._reflection = reflection_engine  # Optional[ReflectionEngine]
 
+        # Dedicated, bounded thread pool for blocking I/O (Sheets, file access).
+        # Using the default executor (None) would share loop.run_in_executor's
+        # implicit pool across every async task in the process, which can grow
+        # unbounded under concurrent load. A fixed-size pool keeps that bounded.
+        self._io_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="brain-io")
+
         logger.info("Brain initialized.")
 
     @classmethod
@@ -126,16 +134,15 @@ class Brain:
 
     async def _io(self, fn, *args, **kwargs):
         """
-        Run a synchronous I/O function (gspread, file) in a thread executor
-        so it doesn't block the async event loop.
+        Run a synchronous I/O function (gspread, file) in a dedicated thread
+        pool so it doesn't block the async event loop.
 
         Usage:
             txns = await self._io(self._get_all_transactions)
             await self._io(self._write_transaction, akun, payee, ...)
         """
         loop = asyncio.get_event_loop()
-        import functools
-        return await loop.run_in_executor(None, functools.partial(fn, *args, **kwargs))
+        return await loop.run_in_executor(self._io_executor, functools.partial(fn, *args, **kwargs))
 
     def _fire_reflection(
         self,

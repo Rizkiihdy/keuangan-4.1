@@ -12,7 +12,9 @@ Changes from V1:
 
 import os
 import re
+import time
 import logging
+import threading
 from datetime import datetime, timedelta
 
 from storage.auth import get_gspread_client
@@ -22,6 +24,25 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------------ #
+# RETRY HELPER                                                          #
+# ------------------------------------------------------------------ #
+# Google Sheets calls can fail transiently (timeouts, quota bursts).
+# Retry a handful of times with short backoff before giving up.
+
+def _with_retry(fn, *args, attempts: int = 3, base_delay: float = 0.5, **kwargs):
+    last_err = None
+    for i in range(attempts):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            last_err = e
+            if i < attempts - 1:
+                delay = base_delay * (2 ** i)
+                logger.warning(f"Sheets call failed ({e}); retrying in {delay}s...")
+                time.sleep(delay)
+    raise last_err
 
 # ------------------------------------------------------------------ #
 # LAZY INITIALIZATION                                                  #
@@ -80,16 +101,51 @@ def tanggal_sekarang_excel() -> float:
 
 
 def parse_rp(val_str) -> int:
-    """Parse rupiah value: 'Rp3.700.000' → 3700000."""
+    """
+    Parse rupiah value into an integer.
+
+    Handles common formats seen from manual sheet entry and AI parsing:
+    - 'Rp3.700.000'   → 3700000   (dot = thousands separator)
+    - '3.700.000,50'  → 3700000   (dot = thousands, comma = decimal)
+    - '3,700,000'     → 3700000   (comma = thousands separator, US style)
+    - '3700000'       → 3700000
+    - '3700000.50'    → 3700000   (plain decimal)
+    """
     if not val_str:
         return 0
     s = str(val_str).strip()
     if not s:
         return 0
-    s = re.sub(r"[Rp\s]", "", s)
-    s = s.replace(".", "").replace(",", ".")
+    s = re.sub(r"[Rp\s]", "", s, flags=re.IGNORECASE)
+    if not s:
+        return 0
+
+    has_dot = "." in s
+    has_comma = "," in s
+
     try:
-        return int(float(s))
+        if has_dot and has_comma:
+            # Whichever separator appears last is the decimal separator.
+            if s.rfind(",") > s.rfind("."):
+                s = s.replace(".", "").replace(",", ".")
+            else:
+                s = s.replace(",", "")
+        elif has_comma and not has_dot:
+            # Ambiguous: '3,700,000' (thousands) vs '3700000,50' (decimal).
+            # Treat as thousands separator unless exactly one comma with 1-2 trailing digits.
+            parts = s.split(",")
+            if len(parts) == 2 and len(parts[1]) in (1, 2):
+                s = s.replace(",", ".")
+            else:
+                s = s.replace(",", "")
+        elif has_dot and not has_comma:
+            # Ambiguous: '3.700.000' (thousands) vs '3700000.50' (decimal).
+            parts = s.split(".")
+            if len(parts) == 2 and len(parts[1]) in (1, 2):
+                pass  # looks like a decimal point, keep as-is
+            else:
+                s = s.replace(".", "")
+        return int(round(float(s)))
     except (ValueError, TypeError):
         return 0
 
@@ -135,6 +191,28 @@ def cari_baris_kosong(sheet) -> int:
 
 
 # ------------------------------------------------------------------ #
+# TRANSACTION CACHE                                                     #
+# ------------------------------------------------------------------ #
+# get_semua_transaksi() is called by nearly every command (saldo, ringkasan,
+# hariini, budget, analisa, ...). Without caching, a single user turn can
+# trigger several full-sheet reads. Cache for a short TTL and invalidate
+# immediately after any write so the bot never shows stale data right
+# after the user adds a transaction.
+
+_TXN_CACHE_TTL_SECONDS = 30
+_txn_cache: list[dict] | None = None
+_txn_cache_at: float = 0.0
+_txn_cache_lock = threading.Lock()
+
+
+def _invalidate_txn_cache() -> None:
+    global _txn_cache, _txn_cache_at
+    with _txn_cache_lock:
+        _txn_cache = None
+        _txn_cache_at = 0.0
+
+
+# ------------------------------------------------------------------ #
 # WRITE                                                                #
 # ------------------------------------------------------------------ #
 
@@ -146,9 +224,8 @@ def tulis_transaksi(
     payment,
     deposit,
 ) -> None:
-    """Write a single transaction row to the Transaksi sheet."""
+    """Append a single transaction row to the Transaksi sheet."""
     sheet = _get_sheet_transaksi()
-    baris = cari_baris_kosong(sheet)
     data = [
         akun,
         tanggal_sekarang_excel(),
@@ -161,11 +238,12 @@ def tulis_transaksi(
         int(payment) if payment else "",
         int(deposit) if deposit else "",
     ]
-    sheet.update(
-        range_name=f"A{baris}:J{baris}",
-        values=[data],
+    _with_retry(
+        sheet.append_row,
+        data,
         value_input_option="USER_ENTERED",
     )
+    _invalidate_txn_cache()
 
 
 def tulis_transfer(
@@ -178,34 +256,43 @@ def tulis_transfer(
     sheet = _get_sheet_transaksi()
     tgl = tanggal_sekarang_excel()
     jam = jam_sekarang_excel()
-    b1 = cari_baris_kosong(sheet)
 
-    sheet.update(
-        range_name=f"A{b1}:J{b1}",
-        values=[[dari_akun, tgl, jam, "-", memo, "", "[Transfer]", "c", int(nominal), ""]],
+    rows = [
+        [dari_akun, tgl, jam, "-", memo, "", "[Transfer]", "c", int(nominal), ""],
+        [ke_akun, tgl, jam, "-", memo, "", "[Transfer]", "c", "", int(nominal)],
+    ]
+    _with_retry(
+        sheet.append_rows,
+        rows,
         value_input_option="USER_ENTERED",
     )
-    b2 = b1 + 1
-    sheet.update(
-        range_name=f"A{b2}:J{b2}",
-        values=[[ke_akun, tgl, jam, "-", memo, "", "[Transfer]", "c", "", int(nominal)]],
-        value_input_option="USER_ENTERED",
-    )
+    _invalidate_txn_cache()
 
 
 # ------------------------------------------------------------------ #
 # READ                                                                 #
 # ------------------------------------------------------------------ #
 
-def get_semua_transaksi() -> list[dict]:
+def get_semua_transaksi(force_refresh: bool = False) -> list[dict]:
     """
     Read all transactions from the Transaksi sheet.
 
     Sheet keuangan V4 has 4 header rows; data starts at row index 4.
     Returns list of normalized transaction dicts.
+
+    Cached for _TXN_CACHE_TTL_SECONDS to avoid re-reading the entire
+    sheet on every command in a single user turn. Pass force_refresh=True
+    to bypass the cache.
     """
+    global _txn_cache, _txn_cache_at
+
+    if not force_refresh:
+        with _txn_cache_lock:
+            if _txn_cache is not None and (time.time() - _txn_cache_at) < _TXN_CACHE_TTL_SECONDS:
+                return list(_txn_cache)
+
     sheet = _get_sheet_transaksi()
-    semua = sheet.get_all_values()
+    semua = _with_retry(sheet.get_all_values)
     hasil = []
 
     for b in semua[4:]:
@@ -234,7 +321,12 @@ def get_semua_transaksi() -> list[dict]:
             "payment":  payment,
             "deposit":  deposit,
         })
-    return hasil
+
+    with _txn_cache_lock:
+        _txn_cache = hasil
+        _txn_cache_at = time.time()
+
+    return list(hasil)
 
 
 def filter_operasional(transaksi: list[dict]) -> list[dict]:

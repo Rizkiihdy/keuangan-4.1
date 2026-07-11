@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
@@ -79,24 +80,29 @@ class JsonMemoryStore(MemoryStore):
 
     def __init__(self, path: str = DEFAULT_JSON_PATH):
         self._path = os.path.abspath(path)
+        self._lock = threading.Lock()
         self._cache: dict[str, list[dict]] = self._load_file()
 
     # -- Public interface -- #
 
     def read(self, user_id: str) -> list[dict]:
-        return list(self._cache.get(str(user_id), []))
+        with self._lock:
+            return list(self._cache.get(str(user_id), []))
 
     def write(self, user_id: str, items: list[dict]) -> None:
-        self._cache[str(user_id)] = items
-        self._flush()
+        with self._lock:
+            self._cache[str(user_id)] = items
+            self._flush()
 
     def read_all(self) -> dict[str, list[dict]]:
-        return {uid: list(items) for uid, items in self._cache.items()}
+        with self._lock:
+            return {uid: list(items) for uid, items in self._cache.items()}
 
     def clear_user(self, user_id: str) -> None:
-        if str(user_id) in self._cache:
-            del self._cache[str(user_id)]
-            self._flush()
+        with self._lock:
+            if str(user_id) in self._cache:
+                del self._cache[str(user_id)]
+                self._flush()
 
     # -- Private helpers -- #
 

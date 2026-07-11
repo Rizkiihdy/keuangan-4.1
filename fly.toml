@@ -5,8 +5,10 @@ primary_region = "sin"
   builder = "paketobuildpacks/builder:base"
 
 [env]
-  TELEGRAM_TOKEN = "8858919060:AAG36quotEXjaiI4VSpZE_iO0Bi4k7e-JPE"
-  GEMINI_API_KEY = "AQ.Ab8RN6IhdC8_PGlpPrUFTJFmr87b_zD1BK0m8LUjF_ag59qYxg"
+  # TELEGRAM_TOKEN and GEMINI_API_KEY must NOT be hardcoded here — they were
+  # previously committed in plaintext, which leaked them into git history.
+  # Set them with `fly secrets set TELEGRAM_TOKEN=... GEMINI_API_KEY=...`
+  # instead, and revoke/rotate the old exposed values (BotFather / AI Studio).
   WEBHOOK_URL = "https://oliv-bot-rizki.fly.dev"
 
 [[services]]

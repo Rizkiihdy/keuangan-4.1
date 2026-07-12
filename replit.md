@@ -1,5 +1,17 @@
 # Oliv — Personal Finance Bot
 
+# 🧭 Status Saat Ini
+
+Proyek Oliv berada di **akhir Phase 2 — sekitar 90–95% selesai**.
+
+| Phase | Status | Detail |
+|---|---|---|
+| **Phase 1** | ✅ Stabil & berjalan | Telegram bot, Google Sheets, AI parsing (text + struk), laporan, budget, transaksi manual/transfer/invest/utang/goal. Dashboard tidak ada di repo ini (`.replit` masih nunjuk folder `dashboard/` yang tidak ditemukan). |
+| **Phase 2** | 🚧 ~90–95% | Arsitektur Brain V2 sudah jadi: `Brain` singleton, `Router`, `DecisionEngine`, `ContextBuilder`, `AIEngine` v2, `FinancialEngine`, `MemoryEngine` v3 + `MemoryRetriever`. Sisanya: `ReflectionEngine` sudah diimplementasikan tapi belum di-*wire* di `bot.py` (di-pass `None`), jadi ekstraksi memory latar belakang dan analisis perilaku dari transaksi belum aktif. |
+| **Phase 3** | 🔜 Belum dimulai | `Knowledge Engine` dan lapisan `Financial Intelligence` belum ada. Predictive analysis sudah dimulai ringan lewat `FinancialEngine.forecast_month_end()` & command `/forecast`. |
+
+Langkah terdekat untuk mencapai 100% Phase 2: inject `ReflectionEngine` (butuh `MemoryExtractor` + `AIEngine`) ke `Brain.initialize()` dan tambahkan handler `/ingatan` di Telegram (kode Brain-nya sudah siap).
+
 Oliv is a Telegram bot that helps track personal finances by logging transactions (income, expenses, transfers) to Google Sheets using natural language and receipt photo scanning powered by Gemini AI.
 
 ## Run & Operate

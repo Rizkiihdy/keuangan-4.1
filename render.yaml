@@ -5,11 +5,12 @@ services:
     plan: free
     branch: render-free-deploy
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: python render_start.py
-    healthCheckPath: /health
+    startCommand: python main.py
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.11"
+      - key: BOT_MODE
+        value: webhook
       - key: TELEGRAM_TOKEN
         sync: false
       - key: GEMINI_API_KEY
@@ -19,4 +20,8 @@ services:
       - key: GOOGLE_SHEET_ID
         sync: false
       - key: ALLOWED_TELEGRAM_IDS
+        sync: false
+      - key: WEBHOOK_PATH
+        sync: false
+      - key: WEBHOOK_SECRET_TOKEN
         sync: false

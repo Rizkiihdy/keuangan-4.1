@@ -218,8 +218,39 @@ def main() -> None:
     else:
         logger.warning("Job queue unavailable — install python-telegram-bot[job-queue].")
 
-    logger.info("Oliv Brain V2 started polling...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    bot_mode = os.environ.get("BOT_MODE", "polling").strip().lower()
+
+    if bot_mode == "webhook":
+        # Render Web Services expose HTTPS publicly and pass the internal port
+        # through PORT. Telegram sends updates to the public HTTPS URL.
+        external_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+        webhook_path = os.environ.get("WEBHOOK_PATH", "oliv-telegram-webhook").strip("/")
+        webhook_secret = os.environ.get("WEBHOOK_SECRET_TOKEN", "").strip()
+        port = int(os.environ.get("PORT", "10000"))
+
+        if not external_url.startswith("https://"):
+            raise RuntimeError("RENDER_EXTERNAL_URL must be an HTTPS URL on Render.")
+        if not webhook_path or any(ch.isspace() for ch in webhook_path):
+            raise RuntimeError("WEBHOOK_PATH must be a non-empty URL path without spaces.")
+        if not webhook_secret:
+            raise RuntimeError("WEBHOOK_SECRET_TOKEN must be set when BOT_MODE=webhook.")
+
+        logger.info("Oliv Brain V2 starting in webhook mode.")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=webhook_path,
+            webhook_url=f"{external_url}/{webhook_path}",
+            secret_token=webhook_secret,
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=False,
+            bootstrap_retries=-1,
+        )
+    elif bot_mode == "polling":
+        logger.info("Oliv Brain V2 started polling...")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    else:
+        raise RuntimeError("BOT_MODE must be either 'polling' or 'webhook'.")
 
 
 if __name__ == "__main__":

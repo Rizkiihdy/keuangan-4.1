@@ -222,20 +222,58 @@ def _invalidate_txn_cache() -> None:
 # WRITE                                                                #
 # ------------------------------------------------------------------ #
 
+def _transaction_data_bounds(sheet) -> tuple[list[list[str]], int]:
+    """Read rows and find the last row containing transaction data in A:J."""
+    values = _with_retry(sheet.get_all_values)
+    last_data_row = 4
+    for row_number, row in enumerate(values, start=1):
+        if row_number < 5:
+            continue
+        if any(str(value).strip() for value in row[:10]):
+            last_data_row = row_number
+    return values, last_data_row
+
+
+def _write_transaction_rows(sheet, rows: list[list]) -> None:
+    """
+    Fill the earliest empty A:J row(s), otherwise write after the last
+    transaction. Then sort complete A:M rows so balance formulas move
+    together with their transactions. Header rows 1-4 are untouched.
+    """
+    values, last_data_row = _transaction_data_bounds(sheet)
+    needed = len(rows)
+    empty_rows = []
+    for row_number in range(5, max(last_data_row, 4) + 1):
+        row = values[row_number - 1] if row_number - 1 < len(values) else []
+        if not any(str(value).strip() for value in row[:10]):
+            empty_rows.append(row_number)
+            if len(empty_rows) == needed:
+                break
+
+    next_row = max(last_data_row + 1, 5)
+    while len(empty_rows) < needed:
+        empty_rows.append(next_row)
+        next_row += 1
+
+    for row_number, row_data in zip(empty_rows, rows):
+        _with_retry(
+            sheet.update,
+            range_name=f"A{row_number}:J{row_number}",
+            values=[row_data],
+            value_input_option="USER_ENTERED",
+        )
+
+    _sort_transaksi_by_date(sheet)
+
+
 def _sort_transaksi_by_date(sheet) -> None:
     """
-    Keep transaction rows compact and chronological (oldest at top,
-    newest at bottom). Sorting A:J moves existing blank rows to the end,
-    so gaps inside the transaction list are filled without deleting data.
-    The four header rows are never included.
+    Sort full transaction rows oldest-to-newest by date and time.
+    Includes A:M so account-balance formulas stay attached to each row.
+    Rows 1-4 (title and column headers) are never touched.
     """
-    values = _with_retry(sheet.get_all_values)
-    last_row = 0
-    for row_number, row in enumerate(values, start=1):
-        if any(str(value).strip() for value in row[:10]):
-            last_row = row_number
-
-    first_data_row = 5  # Rows 1-4 are the existing sheet headers.
+    _, last_row = _transaction_data_bounds(sheet)
+    first_data_row = 5
     if last_row < first_data_row:
         return
 
@@ -247,7 +285,7 @@ def _sort_transaksi_by_date(sheet) -> None:
                     "startRowIndex": first_data_row - 1,
                     "endRowIndex": last_row,
                     "startColumnIndex": 0,
-                    "endColumnIndex": 10,
+                    "endColumnIndex": 13,
                 },
                 "sortSpecs": [
                     {"dimensionIndex": 1, "sortOrder": "ASCENDING"},
@@ -258,10 +296,9 @@ def _sort_transaksi_by_date(sheet) -> None:
     }
     _with_retry(sheet.spreadsheet.batch_update, request)
     logger.info(
-        "Sheets transactions sorted: rows=%s-%s order=date_asc,time_asc",
+        "Sheets transactions sorted: rows=%s-%s order=date_asc,time_asc full_columns=A:M",
         first_data_row, last_row
     )
-
 
 def tulis_transaksi(
     akun: str,
@@ -285,18 +322,8 @@ def tulis_transaksi(
         int(payment) if payment else "",
         int(deposit) if deposit else "",
     ]
-    result = _with_retry(
-        sheet.append_row,
-        data,
-        value_input_option="USER_ENTERED",
-    )
-    updates = result.get("updates", {}) if isinstance(result, dict) else {}
-    logger.info(
-        "Sheets transaction append confirmed: range=%r updated_rows=%r",
-        updates.get("updatedRange"),
-        updates.get("updatedRows"),
-    )
-    _sort_transaksi_by_date(sheet)
+    _write_transaction_rows(sheet, [data])
+    logger.info("Sheets transaction write completed: account=%r payee=%r", akun, payee)
     _invalidate_txn_cache()
 
 
@@ -315,12 +342,7 @@ def tulis_transfer(
         [dari_akun, tgl, jam, "-", memo, "", "[Transfer]", "c", int(nominal), ""],
         [ke_akun, tgl, jam, "-", memo, "", "[Transfer]", "c", "", int(nominal)],
     ]
-    _with_retry(
-        sheet.append_rows,
-        rows,
-        value_input_option="USER_ENTERED",
-    )
-    _sort_transaksi_by_date(sheet)
+    _write_transaction_rows(sheet, rows)
     _invalidate_txn_cache()
 
 

@@ -222,6 +222,47 @@ def _invalidate_txn_cache() -> None:
 # WRITE                                                                #
 # ------------------------------------------------------------------ #
 
+def _sort_transaksi_by_date(sheet) -> None:
+    """
+    Keep transaction rows compact and chronological (oldest at top,
+    newest at bottom). Sorting A:J moves existing blank rows to the end,
+    so gaps inside the transaction list are filled without deleting data.
+    The four header rows are never included.
+    """
+    values = _with_retry(sheet.get_all_values)
+    last_row = 0
+    for row_number, row in enumerate(values, start=1):
+        if any(str(value).strip() for value in row[:10]):
+            last_row = row_number
+
+    first_data_row = 5  # Rows 1-4 are the existing sheet headers.
+    if last_row < first_data_row:
+        return
+
+    request = {
+        "requests": [{
+            "sortRange": {
+                "range": {
+                    "sheetId": sheet.id,
+                    "startRowIndex": first_data_row - 1,
+                    "endRowIndex": last_row,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 10,
+                },
+                "sortSpecs": [
+                    {"dimensionIndex": 1, "sortOrder": "ASCENDING"},
+                    {"dimensionIndex": 2, "sortOrder": "ASCENDING"},
+                ],
+            }
+        }]
+    }
+    _with_retry(sheet.spreadsheet.batch_update, request)
+    logger.info(
+        "Sheets transactions sorted: rows=%s-%s order=date_asc,time_asc",
+        first_data_row, last_row
+    )
+
+
 def tulis_transaksi(
     akun: str,
     payee: str,
@@ -255,6 +296,7 @@ def tulis_transaksi(
         updates.get("updatedRange"),
         updates.get("updatedRows"),
     )
+    _sort_transaksi_by_date(sheet)
     _invalidate_txn_cache()
 
 
@@ -278,6 +320,7 @@ def tulis_transfer(
         rows,
         value_input_option="USER_ENTERED",
     )
+    _sort_transaksi_by_date(sheet)
     _invalidate_txn_cache()
 
 

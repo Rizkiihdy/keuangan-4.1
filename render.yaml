@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: oliv-keuangan-v41
+    runtime: python
+    plan: free
+    branch: render-free-deploy
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python render_start.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.11"
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: ALLOWED_TELEGRAM_IDS
+        sync: false

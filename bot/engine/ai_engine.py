@@ -39,18 +39,19 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-# Model priority chains
+# Model priority chains.
+# New Gemini projects should use current 3.x models. Gemini 2.5 inference
+# can return 404 for projects without prior usage, even when listed in AI Studio.
 TEXT_MODELS = [
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
 ]
 
 VISION_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.5-flash",
-    "gemini-1.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
 ]
 
 # CQ-05 fix: only use categories that exist in the system
@@ -417,35 +418,45 @@ class AIEngine:
     # ---------------------------------------------------------------- #
 
     def _generate_text(self, prompt: str) -> str:
-        """Call text models with fallback chain. Raises QuotaExhaustedError if all fail."""
+        """Call text models with fallback; only classify all-429 failures as quota exhaustion."""
         client = self._get_client()
-        last_error = None
+        failures = []
         for model in TEXT_MODELS:
             try:
                 result = client.models.generate_content(model=model, contents=prompt).text
+                if not result:
+                    raise RuntimeError(f"Gemini returned an empty text response from {model}.")
                 logger.info(f"Text model used: {model}")
                 return result
             except genai_errors.ClientError as e:
                 err = str(e)
+                failures.append((model, err))
                 if "429" in err:
                     delay = _parse_retry_delay(err)
-                    logger.warning(f"Quota {model}, delay={delay}s — skipping to next model")
-                    # Do not sleep here: this method runs in an executor thread and sleeping
-                    # can exhaust the thread pool under concurrent load.
-                    # Instead, skip to the next model immediately.
-                    last_error = e
+                    logger.warning(f"Gemini rate/quota limit on {model}, retry_delay={delay}s; trying fallback.")
                     continue
-                elif "404" in err:
-                    last_error = e
+                if "404" in err:
+                    logger.error(f"Gemini model unavailable for this project: {model}; response={err}")
                     continue
+                logger.exception(f"Gemini text request rejected by {model}: {err}")
                 raise
             except Exception as e:
-                logger.error(f"Gemini text error {model}: {e}")
+                logger.exception(f"Gemini text error on {model}: {e}")
                 raise
-        raise QuotaExhaustedError("Semua model Gemini mencapai batas kuota.")
+
+        if failures and all("429" in err for _, err in failures):
+            raise QuotaExhaustedError(
+                "Semua model Gemini mengembalikan HTTP 429 (rate limit/kuota). "
+                + " | ".join(f"{model}: {err}" for model, err in failures)
+            )
+        details = " | ".join(f"{model}: {err}" for model, err in failures)
+        raise RuntimeError(
+            "Semua model Gemini gagal; kegagalan bukan semata-mata kuota. "
+            f"Periksa model/project/API access. Detail: {details}"
+        )
 
     def _generate_vision(self, image_bytes: bytes, mime_type: str, prompt: str) -> str:
-        """Call vision models with fallback chain."""
+        """Call vision models with fallback; distinguish missing models from rate limits."""
         client = self._get_client()
         parts = [
             genai_types.Part(
@@ -453,28 +464,40 @@ class AIEngine:
             ),
             genai_types.Part(text=prompt),
         ]
-        last_error = None
+        failures = []
         for model in VISION_MODELS:
             try:
                 result = client.models.generate_content(model=model, contents=parts).text
+                if not result:
+                    raise RuntimeError(f"Gemini returned an empty vision response from {model}.")
                 logger.info(f"Vision model used: {model}")
                 return result
             except genai_errors.ClientError as e:
                 err = str(e)
+                failures.append((model, err))
                 if "429" in err:
                     delay = _parse_retry_delay(err)
-                    logger.warning(f"Quota vision {model}, delay={delay}s — skipping to next model")
-                    # Do not sleep: running in executor; sleeping exhausts thread pool under load.
-                    last_error = e
+                    logger.warning(f"Gemini vision rate/quota limit on {model}, retry_delay={delay}s; trying fallback.")
                     continue
-                elif "404" in err:
-                    last_error = e
+                if "404" in err:
+                    logger.error(f"Gemini vision model unavailable for this project: {model}; response={err}")
                     continue
+                logger.exception(f"Gemini vision request rejected by {model}: {err}")
                 raise
             except Exception as e:
-                logger.error(f"Vision error {model}: {e}")
+                logger.exception(f"Gemini vision error on {model}: {e}")
                 raise
-        raise QuotaExhaustedError("Semua model vision Gemini mencapai batas kuota.")
+
+        if failures and all("429" in err for _, err in failures):
+            raise QuotaExhaustedError(
+                "Semua model vision Gemini mengembalikan HTTP 429 (rate limit/kuota). "
+                + " | ".join(f"{model}: {err}" for model, err in failures)
+            )
+        details = " | ".join(f"{model}: {err}" for model, err in failures)
+        raise RuntimeError(
+            "Semua model vision Gemini gagal; kegagalan bukan semata-mata kuota. "
+            f"Periksa model/project/API access. Detail: {details}"
+        )
 
     @staticmethod
     def _strip_json(raw: str) -> str:

@@ -1,16 +1,8 @@
-python-telegram-bot[job-queue]
+python-telegram-bot[webhooks,job-queue]
 google-genai
 gspread
 google-auth
 flask
 flask-cors
 gunicorn
-flask
-flask-cors
-google-auth
-google-genai
-gspread
-gunicorn
-python-telegram-bot
-python-telegram-bot[job-queue]
 tlgbotfwk

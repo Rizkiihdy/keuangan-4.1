@@ -64,7 +64,13 @@ def _get_sheet_transaksi():
         else:
             _sheet_utama = gc.open("keuangan v4")
         _sheet_transaksi = _sheet_utama.worksheet("Transaksi")
-        logger.info("Google Sheets (Transaksi) connected.")
+        # Safe diagnostics: identify the destination without exposing the full ID.
+        logger.info(
+            "Sheets destination verified: spreadsheet=%r id_suffix=%s worksheet=%r",
+            _sheet_utama.title,
+            _sheet_utama.id[-6:] if _sheet_utama.id else "unknown",
+            _sheet_transaksi.title,
+        )
     return _sheet_transaksi
 
 
@@ -216,6 +222,84 @@ def _invalidate_txn_cache() -> None:
 # WRITE                                                                #
 # ------------------------------------------------------------------ #
 
+def _transaction_data_bounds(sheet) -> tuple[list[list[str]], int]:
+    """Read rows and find the last row containing transaction data in A:J."""
+    values = _with_retry(sheet.get_all_values)
+    last_data_row = 4
+    for row_number, row in enumerate(values, start=1):
+        if row_number < 5:
+            continue
+        if any(str(value).strip() for value in row[:10]):
+            last_data_row = row_number
+    return values, last_data_row
+
+
+def _write_transaction_rows(sheet, rows: list[list]) -> None:
+    """
+    Fill the earliest empty A:J row(s), otherwise write after the last
+    transaction. Then sort complete A:M rows so balance formulas move
+    together with their transactions. Header rows 1-4 are untouched.
+    """
+    values, last_data_row = _transaction_data_bounds(sheet)
+    needed = len(rows)
+    empty_rows = []
+    for row_number in range(5, max(last_data_row, 4) + 1):
+        row = values[row_number - 1] if row_number - 1 < len(values) else []
+        if not any(str(value).strip() for value in row[:10]):
+            empty_rows.append(row_number)
+            if len(empty_rows) == needed:
+                break
+
+    next_row = max(last_data_row + 1, 5)
+    while len(empty_rows) < needed:
+        empty_rows.append(next_row)
+        next_row += 1
+
+    for row_number, row_data in zip(empty_rows, rows):
+        _with_retry(
+            sheet.update,
+            range_name=f"A{row_number}:J{row_number}",
+            values=[row_data],
+            value_input_option="USER_ENTERED",
+        )
+
+    _sort_transaksi_by_date(sheet)
+
+
+def _sort_transaksi_by_date(sheet) -> None:
+    """
+    Sort full transaction rows oldest-to-newest by date and time.
+    Includes A:M so account-balance formulas stay attached to each row.
+    Rows 1-4 (title and column headers) are never touched.
+    """
+    _, last_row = _transaction_data_bounds(sheet)
+    first_data_row = 5
+    if last_row < first_data_row:
+        return
+
+    request = {
+        "requests": [{
+            "sortRange": {
+                "range": {
+                    "sheetId": sheet.id,
+                    "startRowIndex": first_data_row - 1,
+                    "endRowIndex": last_row,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": 13,
+                },
+                "sortSpecs": [
+                    {"dimensionIndex": 1, "sortOrder": "ASCENDING"},
+                    {"dimensionIndex": 2, "sortOrder": "ASCENDING"},
+                ],
+            }
+        }]
+    }
+    _with_retry(sheet.spreadsheet.batch_update, request)
+    logger.info(
+        "Sheets transactions sorted: rows=%s-%s order=date_asc,time_asc full_columns=A:M",
+        first_data_row, last_row
+    )
+
 def tulis_transaksi(
     akun: str,
     payee: str,
@@ -238,11 +322,8 @@ def tulis_transaksi(
         int(payment) if payment else "",
         int(deposit) if deposit else "",
     ]
-    _with_retry(
-        sheet.append_row,
-        data,
-        value_input_option="USER_ENTERED",
-    )
+    _write_transaction_rows(sheet, [data])
+    logger.info("Sheets transaction write completed: account=%r payee=%r", akun, payee)
     _invalidate_txn_cache()
 
 
@@ -261,11 +342,7 @@ def tulis_transfer(
         [dari_akun, tgl, jam, "-", memo, "", "[Transfer]", "c", int(nominal), ""],
         [ke_akun, tgl, jam, "-", memo, "", "[Transfer]", "c", "", int(nominal)],
     ]
-    _with_retry(
-        sheet.append_rows,
-        rows,
-        value_input_option="USER_ENTERED",
-    )
+    _write_transaction_rows(sheet, rows)
     _invalidate_txn_cache()
 
 

@@ -64,7 +64,13 @@ def _get_sheet_transaksi():
         else:
             _sheet_utama = gc.open("keuangan v4")
         _sheet_transaksi = _sheet_utama.worksheet("Transaksi")
-        logger.info("Google Sheets (Transaksi) connected.")
+        # Safe diagnostics: identify the destination without exposing the full ID.
+        logger.info(
+            "Sheets destination verified: spreadsheet=%r id_suffix=%s worksheet=%r",
+            _sheet_utama.title,
+            _sheet_utama.id[-6:] if _sheet_utama.id else "unknown",
+            _sheet_transaksi.title,
+        )
     return _sheet_transaksi
 
 
@@ -238,10 +244,16 @@ def tulis_transaksi(
         int(payment) if payment else "",
         int(deposit) if deposit else "",
     ]
-    _with_retry(
+    result = _with_retry(
         sheet.append_row,
         data,
         value_input_option="USER_ENTERED",
+    )
+    updates = result.get("updates", {}) if isinstance(result, dict) else {}
+    logger.info(
+        "Sheets transaction append confirmed: range=%r updated_rows=%r",
+        updates.get("updatedRange"),
+        updates.get("updatedRows"),
     )
     _invalidate_txn_cache()
 

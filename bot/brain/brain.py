@@ -210,47 +210,14 @@ class Brain:
 
         # Step 4: Transaction or Transfer
         if route.message_type in (MessageType.TRANSACTION, MessageType.TRANSFER, MessageType.UNKNOWN):
-            response = await self._handle_transaction_text(text, chat_id, user_name, route)
-            self._fire_reflection(
-                user_id=str(chat_id),
-                user_message=text,
-                bot_response=response.text,
-                transaction_data=response.pending_transaction,
-                used_ai=response.used_ai,
-            )
-            return response
+            return await self._handle_transaction_text(text, chat_id, user_name, route)
 
-        # Step 5: Question / Analysis
-        if route.message_type in (MessageType.QUESTION, MessageType.FINANCIAL_ANALYSIS):
-            response = await self._handle_question(text, chat_id, user_name)
-            self._fire_reflection(
-                user_id=str(chat_id),
-                user_message=text,
-                bot_response=response.text,
-                used_ai=response.used_ai,
-            )
-            return response
-
-        # Step 6: Budget / Goal / Report — Python only
-        if route.message_type == MessageType.BUDGET:
-            return await self._handle_budget_check(chat_id, user_name)
-
-        if route.message_type == MessageType.GOAL:
-            return await self._handle_goal_summary(chat_id, user_name)
-
-        if route.message_type == MessageType.REPORT:
-            return await self._handle_report(chat_id, user_name)
-
-        # Fallback: try as transaction
-        response = await self._handle_transaction_text(text, chat_id, user_name, route)
-        self._fire_reflection(
-            user_id=str(chat_id),
-            user_message=text,
-            bot_response=response.text,
-            transaction_data=response.pending_transaction,
-            used_ai=response.used_ai,
+        # Oliv is a transaction recorder only.
+        return BrainResponse(
+            text="Aku sekarang fokus mencatat pengeluaran, pemasukan, transfer, dan scan struk ya 😊",
+            message_type=route.message_type,
+            used_ai=False,
         )
-        return response
 
     async def process_photo(
         self,
@@ -324,14 +291,6 @@ class Brain:
             pending_transaction=parsed.to_dict(),
         )
 
-        # Reflect: update behaviour from photo transaction
-        self._fire_reflection(
-            user_id=str(chat_id),
-            user_message="[photo receipt]",
-            bot_response=msg,
-            transaction_data=parsed.to_dict(),
-            used_ai=True,
-        )
         return response
 
     async def process_command_ringkasan(self, chat_id: int, user_name: str) -> BrainResponse:
@@ -897,15 +856,9 @@ class Brain:
         route: RouterResult,
     ) -> BrainResponse:
         """Handle free-text transaction parsing."""
-        # Build query-aware memory hint for better AI accuracy
-        memory_hint = self._retriever.retrieve_as_text(
-            user_id=str(chat_id),
-            message_type_str="Transaction",
-            query=text,
-        )
-
+        # Fast recording path: skip memory lookup for each transaction.
         try:
-            parsed = await self._ai.parse_transaction_async(text, memory_hint)
+            parsed = await self._ai.parse_transaction_async(text, "")
         except QuotaExhaustedError:
             return BrainResponse(
                 text=f"Waduh {user_name}, kuota AI habis nih 😓 Coba lagi besok ya!",
@@ -970,11 +923,9 @@ class Brain:
                 if komentar:
                     msg += f"\n_{komentar}_"
 
-                # Async budget alert (Python calculation)
-                budget_alert = await self._build_budget_alert_text(chat_id, parsed.kategori)
-
+                # Return immediately after the Sheet write; reporting is out of scope.
                 return BrainResponse(
-                    text=msg + (f"\n\n{budget_alert}" if budget_alert else ""),
+                    text=msg,
                     message_type=MessageType.TRANSACTION,
                     used_ai=True,
                     quality=decision.quality,

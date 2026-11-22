@@ -204,10 +204,6 @@ class Brain:
                 used_ai=False,
             )
 
-        # Step 3: Memory update
-        if route.message_type == MessageType.MEMORY_UPDATE:
-            return await self._handle_memory_update(text, chat_id, user_name)
-
         # Step 4: Transaction or Transfer
         if route.message_type in (MessageType.TRANSACTION, MessageType.TRANSFER, MessageType.UNKNOWN):
             return await self._handle_transaction_text(text, chat_id, user_name, route)
@@ -879,7 +875,7 @@ class Brain:
                     f"• _\"beli makan siang 25.000\"_\n"
                     f"• _\"gajian 4 juta\"_\n"
                     f"• _\"bayar grab 18rb\"_\n\n"
-                    f"Kalau mau tanya, pakai /tanya ya!"
+                    f"Kirim ulang dengan nominal dan keterangan yang lebih jelas ya."
                 ),
                 used_ai=True,
             )

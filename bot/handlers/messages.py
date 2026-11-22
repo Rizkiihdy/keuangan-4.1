@@ -39,6 +39,40 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 @require_auth
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Transcribe a Telegram voice note, then pass its text through the normal transaction flow."""
+    user = update.effective_user
+    name = fname(user)
+    await update.message.reply_text("🎙️ Aku dengarkan voice kamu dulu ya...")
+
+    try:
+        voice = update.message.voice
+        tg_file = await context.bot.get_file(voice.file_id)
+        audio_bytes = bytes(await tg_file.download_as_bytearray())
+        mime_type = voice.mime_type or "audio/ogg"
+
+        brain = Brain.get_instance()
+        transcript = await brain._ai.transcribe_voice_async(audio_bytes, mime_type)
+        if not transcript:
+            await update.message.reply_text(
+                "Maaf, suaranya belum terbaca jelas. Coba rekam ulang dengan suara lebih dekat ya."
+            )
+            return
+
+        await update.message.reply_text(
+            f"📝 Aku menangkap: _{transcript}_\n\nAku proses sebagai transaksi ya...",
+            parse_mode="Markdown",
+        )
+        response = await brain.process_free_text(transcript, update.effective_chat.id, name)
+        await update.message.reply_text(response.text, parse_mode=response.parse_mode)
+    except Exception as e:
+        logger.exception("Voice processing failed: %s", e)
+        await update.message.reply_text(
+            "Maaf, voice note belum berhasil diproses. Coba kirim ulang atau ketik transaksinya ya."
+        )
+
+
+@require_auth
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handle photo messages — receipt scanning via AI Vision.

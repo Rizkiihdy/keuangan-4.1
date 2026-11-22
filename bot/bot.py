@@ -176,47 +176,17 @@ def main() -> None:
     app.bot_data["registry"] = registry
     app.bot_data["save_reg"] = _save_reg
 
-    # Commands
-    app.add_handler(CommandHandler("start",        start))
-    app.add_handler(CommandHandler("help",         help_cmd))
-    app.add_handler(CommandHandler("pengeluaran",  pengeluaran))
-    app.add_handler(CommandHandler("pemasukan",    pemasukan))
-    app.add_handler(CommandHandler("ringkasan",    ringkasan))
-    app.add_handler(CommandHandler("saldo",        saldo_cmd))
-    app.add_handler(CommandHandler("hariini",      hariini_cmd))
-    app.add_handler(CommandHandler("mingguini",    mingguini_cmd))
-    app.add_handler(CommandHandler("terbesar",     terbesar_cmd))
-    app.add_handler(CommandHandler("analisa",      analisa_cmd))
-    app.add_handler(CommandHandler("budget",       budget_cmd))
-    app.add_handler(CommandHandler("terakhir",     terakhir))
-    app.add_handler(CommandHandler("tanya",        tanya))
-    app.add_handler(CommandHandler("networth",     networth_cmd))
-    app.add_handler(CommandHandler("forecast",     forecast_cmd))
-    app.add_handler(CommandHandler("invest",       invest_cmd))
-    app.add_handler(CommandHandler("dividen",      dividen_cmd))
-    app.add_handler(CommandHandler("jual",         jual_cmd))
-    app.add_handler(CommandHandler("utang",        utang_cmd))
-    app.add_handler(CommandHandler("piutang",      piutang_cmd))
-    app.add_handler(CommandHandler("goal",         goal_cmd))
-    app.add_handler(CommandHandler("tabung",       tabung_cmd))
-    app.add_handler(CommandHandler("aset",         aset_cmd))
-    app.add_handler(CommandHandler("sheets",       list_sheets_cmd))
+    # Minimal command surface: recording only.
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("pengeluaran", pengeluaran))
+    app.add_handler(CommandHandler("pemasukan", pemasukan))
 
     # Message handlers (Brain routes internally)
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_text))
 
-    # Weekly report scheduler
-    if app.job_queue:
-        app.job_queue.run_daily(
-            _send_weekly_report,
-            time=dt_time(12, 0, 0),  # 12:00 UTC = 19:00 WIB
-            days=(6,),               # Sunday
-            name="weekly_report",
-        )
-        logger.info("Weekly report scheduled: Sunday 19:00 WIB.")
-    else:
-        logger.warning("Job queue unavailable — install python-telegram-bot[job-queue].")
+    # Weekly report scheduler disabled: Oliv is a transaction recorder only.
 
     bot_mode = os.environ.get("BOT_MODE", "polling").strip().lower()
 

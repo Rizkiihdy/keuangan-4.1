@@ -34,7 +34,7 @@ from handlers.commands import (
     goal_cmd, tabung_cmd, aset_cmd, list_sheets_cmd,
     post_init,
 )
-from handlers.messages import handle_free_text, handle_photo
+from handlers.messages import handle_free_text, handle_photo, handle_voice
 
 # Sheets functions (injected into Brain)
 from sheets import (
@@ -184,6 +184,7 @@ def main() -> None:
 
     # Message handlers (Brain routes internally)
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_text))
 
     # Weekly report scheduler disabled: Oliv is a transaction recorder only.

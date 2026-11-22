@@ -52,24 +52,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx: dict = context.bot_data
     _register(user, update.effective_chat.id, ctx.get("registry", {}), ctx.get("save_reg", lambda _: None))
     await update.message.reply_text(
-        f"Halo *{name}!* 👋 Aku *{BOT_NAME}*.
-
-"
-        "Aku fokus untuk mencatat keuanganmu:
-"
-        "• Pengeluaran — _beli kopi 15rb_
-"
-        "• Pemasukan — _gajian 5 juta_
-"
-        "• Transfer — _transfer 100rb dari BCA ke GoPay_
-"
-        "• Scan struk — kirim foto struk yang jelas.
-
-"
+        f"Halo *{name}!* 👋 Aku *{BOT_NAME}*.\n\n"
+        "Aku fokus untuk mencatat keuanganmu:\n"
+        "• Pengeluaran — _beli kopi 15rb_\n"
+        "• Pemasukan — _gajian 5 juta_\n"
+        "• Transfer — _transfer 100rb dari BCA ke GoPay_\n"
+        "• Scan struk — kirim foto struk yang jelas.\n\n"
         "Semua transaksi akan masuk ke Google Sheets. 📝",
         parse_mode="Markdown",
     )
-
 @require_auth
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await start(update, context)

@@ -236,35 +236,37 @@ def _transaction_data_bounds(sheet) -> tuple[list[list[str]], int]:
 
 def _write_transaction_rows(sheet, rows: list[list]) -> None:
     """
-    Fill the earliest empty A:J row(s), otherwise write after the last
-    transaction. Then sort complete A:M rows so balance formulas move
-    together with their transactions. Header rows 1-4 are untouched.
+    Fast sequential writer:
+    - One read finds the last occupied transaction row and any internal gaps.
+    - If no gap exists, write directly after the last row (one write, no sort).
+    - If a gap exists, fill the earliest gap(s), then sort A:M only once so
+      formulas/balances remain attached to their transaction.
     """
     values, last_data_row = _transaction_data_bounds(sheet)
     needed = len(rows)
     empty_rows = []
-    for row_number in range(5, max(last_data_row, 4) + 1):
+    for row_number in range(5, last_data_row + 1):
         row = values[row_number - 1] if row_number - 1 < len(values) else []
         if not any(str(value).strip() for value in row[:10]):
             empty_rows.append(row_number)
             if len(empty_rows) == needed:
                 break
 
-    next_row = max(last_data_row + 1, 5)
-    while len(empty_rows) < needed:
-        empty_rows.append(next_row)
-        next_row += 1
+    if len(empty_rows) < needed:
+        # No sufficient internal gap: append all rows consecutively.
+        start_row = max(last_data_row + 1, 5)
+        empty_rows.extend(range(start_row, start_row + needed - len(empty_rows)))
 
-    for row_number, row_data in zip(empty_rows, rows):
-        _with_retry(
-            sheet.update,
-            range_name=f"A{row_number}:J{row_number}",
-            values=[row_data],
-            value_input_option="USER_ENTERED",
-        )
+    updates = [
+        {"range": f"A{row_number}:J{row_number}", "values": [row_data]}
+        for row_number, row_data in zip(empty_rows, rows)
+    ]
+    _with_retry(sheet.batch_update, updates, value_input_option="USER_ENTERED")
 
-    _sort_transaksi_by_date(sheet)
-
+    # Only sort when a transaction was inserted into a hole before later data.
+    has_internal_gap = any(row_number <= last_data_row for row_number in empty_rows)
+    if has_internal_gap:
+        _sort_transaksi_by_date(sheet)
 
 def _sort_transaksi_by_date(sheet) -> None:
     """

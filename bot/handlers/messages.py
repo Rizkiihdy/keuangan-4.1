@@ -31,13 +31,7 @@ async def handle_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     name = fname(user)
     text = update.message.text.strip()
 
-    # Pre-classify with router to decide if we need a loading message
-    from brain.router import Router, MessageType
-    route = Router().classify(text)
-
-    if route.message_type != MessageType.SMALL_TALK:
-        await update.message.reply_text(f"Bentar ya {name}, aku proses dulu... ⏳")
-
+    # Avoid classifying twice; Brain owns routing and parsing.
     brain = Brain.get_instance()
     response = await brain.process_free_text(text, update.effective_chat.id, name)
 

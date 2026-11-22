@@ -514,6 +514,47 @@ class AIEngine:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.parse_receipt_photo, image_bytes, mime_type)
 
+    def transcribe_voice(self, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+        """Transcribe a Telegram voice note with Gemini audio understanding."""
+        prompt = (
+            "Transkripsikan audio bahasa Indonesia ini secara akurat. "
+            "Pertahankan angka, nominal uang, nama merchant, nama akun pembayaran, "
+            "dan kata-kata seperti pengeluaran, pemasukan, transfer. "
+            "Kembalikan hanya teks transkripsi, tanpa penjelasan. "
+            "Jika audio tidak dapat dipahami, kembalikan string kosong."
+        )
+        client = self._get_client()
+        parts = [
+            genai_types.Part(
+                inline_data=genai_types.Blob(mime_type=mime_type, data=audio_bytes)
+            ),
+            genai_types.Part(text=prompt),
+        ]
+        failures = []
+        for model in TEXT_MODELS:
+            try:
+                response = client.models.generate_content(model=model, contents=parts)
+                transcript = (response.text or "").strip()
+                if transcript:
+                    logger.info("Voice transcription model used: %s", model)
+                    return transcript
+                return ""
+            except genai_errors.ClientError as e:
+                err = str(e)
+                failures.append((model, err))
+                if "404" in err or "429" in err:
+                    logger.warning("Voice model %s unavailable/rate-limited; trying fallback.", model)
+                    continue
+                raise
+        if failures and all("429" in err for _, err in failures):
+            raise QuotaExhaustedError("Gemini voice transcription quota/rate limit reached.")
+        raise RuntimeError("Gemini voice transcription failed: " + " | ".join(f"{m}: {e}" for m, e in failures))
+
+    async def transcribe_voice_async(self, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+        """Async wrapper for voice transcription."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.transcribe_voice, audio_bytes, mime_type)
+
     async def generate_insight_async(self, user_name: str, financial_summary: str, request_type: str = "analisa") -> str:
         """Async wrapper for insight generation."""
         loop = asyncio.get_event_loop()

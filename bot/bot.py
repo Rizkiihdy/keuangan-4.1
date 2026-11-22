@@ -34,7 +34,7 @@ from handlers.commands import (
     goal_cmd, tabung_cmd, aset_cmd, list_sheets_cmd,
     post_init,
 )
-from handlers.messages import handle_free_text, handle_photo
+from handlers.messages import handle_free_text, handle_photo, handle_voice
 
 # Sheets functions (injected into Brain)
 from sheets import (
@@ -176,50 +176,52 @@ def main() -> None:
     app.bot_data["registry"] = registry
     app.bot_data["save_reg"] = _save_reg
 
-    # Commands
-    app.add_handler(CommandHandler("start",        start))
-    app.add_handler(CommandHandler("help",         help_cmd))
-    app.add_handler(CommandHandler("pengeluaran",  pengeluaran))
-    app.add_handler(CommandHandler("pemasukan",    pemasukan))
-    app.add_handler(CommandHandler("ringkasan",    ringkasan))
-    app.add_handler(CommandHandler("saldo",        saldo_cmd))
-    app.add_handler(CommandHandler("hariini",      hariini_cmd))
-    app.add_handler(CommandHandler("mingguini",    mingguini_cmd))
-    app.add_handler(CommandHandler("terbesar",     terbesar_cmd))
-    app.add_handler(CommandHandler("analisa",      analisa_cmd))
-    app.add_handler(CommandHandler("budget",       budget_cmd))
-    app.add_handler(CommandHandler("terakhir",     terakhir))
-    app.add_handler(CommandHandler("tanya",        tanya))
-    app.add_handler(CommandHandler("networth",     networth_cmd))
-    app.add_handler(CommandHandler("forecast",     forecast_cmd))
-    app.add_handler(CommandHandler("invest",       invest_cmd))
-    app.add_handler(CommandHandler("dividen",      dividen_cmd))
-    app.add_handler(CommandHandler("jual",         jual_cmd))
-    app.add_handler(CommandHandler("utang",        utang_cmd))
-    app.add_handler(CommandHandler("piutang",      piutang_cmd))
-    app.add_handler(CommandHandler("goal",         goal_cmd))
-    app.add_handler(CommandHandler("tabung",       tabung_cmd))
-    app.add_handler(CommandHandler("aset",         aset_cmd))
-    app.add_handler(CommandHandler("sheets",       list_sheets_cmd))
+    # Minimal command surface: recording only.
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("pengeluaran", pengeluaran))
+    app.add_handler(CommandHandler("pemasukan", pemasukan))
 
     # Message handlers (Brain routes internally)
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_text))
 
-    # Weekly report scheduler
-    if app.job_queue:
-        app.job_queue.run_daily(
-            _send_weekly_report,
-            time=dt_time(12, 0, 0),  # 12:00 UTC = 19:00 WIB
-            days=(6,),               # Sunday
-            name="weekly_report",
-        )
-        logger.info("Weekly report scheduled: Sunday 19:00 WIB.")
-    else:
-        logger.warning("Job queue unavailable — install python-telegram-bot[job-queue].")
+    # Weekly report scheduler disabled: Oliv is a transaction recorder only.
 
-    logger.info("Oliv Brain V2 started polling...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    bot_mode = os.environ.get("BOT_MODE", "polling").strip().lower()
+
+    if bot_mode == "webhook":
+        # Render Web Services expose HTTPS publicly and pass the internal port
+        # through PORT. Telegram sends updates to the public HTTPS URL.
+        external_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+        webhook_path = os.environ.get("WEBHOOK_PATH", "oliv-telegram-webhook").strip("/")
+        webhook_secret = os.environ.get("WEBHOOK_SECRET_TOKEN", "").strip()
+        port = int(os.environ.get("PORT", "10000"))
+
+        if not external_url.startswith("https://"):
+            raise RuntimeError("RENDER_EXTERNAL_URL must be an HTTPS URL on Render.")
+        if not webhook_path or any(ch.isspace() for ch in webhook_path):
+            raise RuntimeError("WEBHOOK_PATH must be a non-empty URL path without spaces.")
+        if not webhook_secret:
+            raise RuntimeError("WEBHOOK_SECRET_TOKEN must be set when BOT_MODE=webhook.")
+
+        logger.info("Oliv Brain V2 starting in webhook mode.")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=webhook_path,
+            webhook_url=f"{external_url}/{webhook_path}",
+            secret_token=webhook_secret,
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=False,
+            bootstrap_retries=-1,
+        )
+    elif bot_mode == "polling":
+        logger.info("Oliv Brain V2 started polling...")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    else:
+        raise RuntimeError("BOT_MODE must be either 'polling' or 'webhook'.")
 
 
 if __name__ == "__main__":

@@ -39,18 +39,17 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-# Model priority chains
+# Model priority chains.
+# New Gemini projects should use current 3.x models. Gemini 2.5 inference
+# can return 404 for projects without prior usage, even when listed in AI Studio.
 TEXT_MODELS = [
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
 ]
 
 VISION_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.5-flash",
-    "gemini-1.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
 ]
 
 # CQ-05 fix: only use categories that exist in the system
@@ -417,35 +416,45 @@ class AIEngine:
     # ---------------------------------------------------------------- #
 
     def _generate_text(self, prompt: str) -> str:
-        """Call text models with fallback chain. Raises QuotaExhaustedError if all fail."""
+        """Call text models with fallback; only classify all-429 failures as quota exhaustion."""
         client = self._get_client()
-        last_error = None
+        failures = []
         for model in TEXT_MODELS:
             try:
                 result = client.models.generate_content(model=model, contents=prompt).text
+                if not result:
+                    raise RuntimeError(f"Gemini returned an empty text response from {model}.")
                 logger.info(f"Text model used: {model}")
                 return result
             except genai_errors.ClientError as e:
                 err = str(e)
+                failures.append((model, err))
                 if "429" in err:
                     delay = _parse_retry_delay(err)
-                    logger.warning(f"Quota {model}, delay={delay}s — skipping to next model")
-                    # Do not sleep here: this method runs in an executor thread and sleeping
-                    # can exhaust the thread pool under concurrent load.
-                    # Instead, skip to the next model immediately.
-                    last_error = e
+                    logger.warning(f"Gemini rate/quota limit on {model}, retry_delay={delay}s; trying fallback.")
                     continue
-                elif "404" in err:
-                    last_error = e
+                if "404" in err:
+                    logger.error(f"Gemini model unavailable for this project: {model}; response={err}")
                     continue
+                logger.exception(f"Gemini text request rejected by {model}: {err}")
                 raise
             except Exception as e:
-                logger.error(f"Gemini text error {model}: {e}")
+                logger.exception(f"Gemini text error on {model}: {e}")
                 raise
-        raise QuotaExhaustedError("Semua model Gemini mencapai batas kuota.")
+
+        if failures and all("429" in err for _, err in failures):
+            raise QuotaExhaustedError(
+                "Semua model Gemini mengembalikan HTTP 429 (rate limit/kuota). "
+                + " | ".join(f"{model}: {err}" for model, err in failures)
+            )
+        details = " | ".join(f"{model}: {err}" for model, err in failures)
+        raise RuntimeError(
+            "Semua model Gemini gagal; kegagalan bukan semata-mata kuota. "
+            f"Periksa model/project/API access. Detail: {details}"
+        )
 
     def _generate_vision(self, image_bytes: bytes, mime_type: str, prompt: str) -> str:
-        """Call vision models with fallback chain."""
+        """Call vision models with bounded retries for transient 5xx/503 overloads."""
         client = self._get_client()
         parts = [
             genai_types.Part(
@@ -453,28 +462,58 @@ class AIEngine:
             ),
             genai_types.Part(text=prompt),
         ]
-        last_error = None
+        failures = []
         for model in VISION_MODELS:
-            try:
-                result = client.models.generate_content(model=model, contents=parts).text
-                logger.info(f"Vision model used: {model}")
-                return result
-            except genai_errors.ClientError as e:
-                err = str(e)
-                if "429" in err:
-                    delay = _parse_retry_delay(err)
-                    logger.warning(f"Quota vision {model}, delay={delay}s — skipping to next model")
-                    # Do not sleep: running in executor; sleeping exhausts thread pool under load.
-                    last_error = e
-                    continue
-                elif "404" in err:
-                    last_error = e
-                    continue
-                raise
-            except Exception as e:
-                logger.error(f"Vision error {model}: {e}")
-                raise
-        raise QuotaExhaustedError("Semua model vision Gemini mencapai batas kuota.")
+            # Retry transient server overloads on the same model with backoff,
+            # then move to the next model rather than failing the receipt scan.
+            for attempt in range(3):
+                try:
+                    result = client.models.generate_content(model=model, contents=parts).text
+                    if not result:
+                        raise RuntimeError(f"Gemini returned an empty vision response from {model}.")
+                    logger.info("Vision model used: %s", model)
+                    return result
+                except genai_errors.ServerError as e:
+                    code = getattr(e, "code", None)
+                    err = str(e)
+                    failures.append((model, err))
+                    if code in (500, 502, 503, 504) and attempt < 2:
+                        delay = 2 ** attempt
+                        logger.warning(
+                            "Gemini vision transient server error on %s (HTTP %s); "
+                            "retry %s/2 in %ss.",
+                            model, code, attempt + 1, delay,
+                        )
+                        import time
+                        time.sleep(delay)
+                        continue
+                    logger.warning(
+                        "Gemini vision server error on %s after %s attempt(s); trying fallback model. %s",
+                        model, attempt + 1, err,
+                    )
+                    break
+                except genai_errors.ClientError as e:
+                    err = str(e)
+                    failures.append((model, err))
+                    if "429" in err or "404" in err:
+                        logger.warning("Gemini vision model %s unavailable/rate-limited; trying fallback. %s", model, err)
+                        break
+                    logger.exception("Gemini vision request rejected by %s: %s", model, err)
+                    raise
+                except Exception as e:
+                    logger.exception("Gemini vision error on %s: %s", model, e)
+                    raise
+
+        if failures and all("429" in err for _, err in failures):
+            raise QuotaExhaustedError(
+                "Semua model vision Gemini mengembalikan HTTP 429 (rate limit/kuota). "
+                + " | ".join(f"{model}: {err}" for model, err in failures)
+            )
+        details = " | ".join(f"{model}: {err}" for model, err in failures)
+        raise RuntimeError(
+            "Semua model vision Gemini gagal setelah retry/fallback. "
+            f"Periksa ketersediaan layanan/model. Detail: {details}"
+        )
 
     @staticmethod
     def _strip_json(raw: str) -> str:
@@ -492,6 +531,47 @@ class AIEngine:
         """Async wrapper for receipt parsing."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.parse_receipt_photo, image_bytes, mime_type)
+
+    def transcribe_voice(self, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+        """Transcribe a Telegram voice note with Gemini audio understanding."""
+        prompt = (
+            "Transkripsikan audio bahasa Indonesia ini secara akurat. "
+            "Pertahankan angka, nominal uang, nama merchant, nama akun pembayaran, "
+            "dan kata-kata seperti pengeluaran, pemasukan, transfer. "
+            "Kembalikan hanya teks transkripsi, tanpa penjelasan. "
+            "Jika audio tidak dapat dipahami, kembalikan string kosong."
+        )
+        client = self._get_client()
+        parts = [
+            genai_types.Part(
+                inline_data=genai_types.Blob(mime_type=mime_type, data=audio_bytes)
+            ),
+            genai_types.Part(text=prompt),
+        ]
+        failures = []
+        for model in TEXT_MODELS:
+            try:
+                response = client.models.generate_content(model=model, contents=parts)
+                transcript = (response.text or "").strip()
+                if transcript:
+                    logger.info("Voice transcription model used: %s", model)
+                    return transcript
+                return ""
+            except genai_errors.ClientError as e:
+                err = str(e)
+                failures.append((model, err))
+                if "404" in err or "429" in err:
+                    logger.warning("Voice model %s unavailable/rate-limited; trying fallback.", model)
+                    continue
+                raise
+        if failures and all("429" in err for _, err in failures):
+            raise QuotaExhaustedError("Gemini voice transcription quota/rate limit reached.")
+        raise RuntimeError("Gemini voice transcription failed: " + " | ".join(f"{m}: {e}" for m, e in failures))
+
+    async def transcribe_voice_async(self, audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+        """Async wrapper for voice transcription."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.transcribe_voice, audio_bytes, mime_type)
 
     async def generate_insight_async(self, user_name: str, financial_summary: str, request_type: str = "analisa") -> str:
         """Async wrapper for insight generation."""

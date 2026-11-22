@@ -51,41 +51,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     name = fname(user)
     ctx: dict = context.bot_data
     _register(user, update.effective_chat.id, ctx.get("registry", {}), ctx.get("save_reg", lambda _: None))
-
     await update.message.reply_text(
-        f"Halo *{name}!* 👋 Aku *{BOT_NAME}*, asisten keuangan pribadimu~ 💸\n\n"
-        f"Gak perlu ribet — langsung cerita atau kirim foto struk:\n\n"
-        f"💬 _\"beli kopi 15rb di kopi kenangan\"_\n"
-        f"💬 _\"gajian 5 juta\"_\n"
-        f"💬 _\"bayar listrik 250rb\"_\n"
-        f"📸 _Kirim foto struk → aku scan & catat otomatis!_\n\n"
-        f"Semua langsung masuk Google Sheet kamu! 📊\n\n"
-        f"*Perintah tersedia:*\n"
-        f"📉 /pengeluaran — catat pengeluaran manual\n"
-        f"📈 /pemasukan — catat pemasukan manual\n"
-        f"📊 /ringkasan — ringkasan keuangan bulan ini\n"
-        f"💰 /saldo — cek saldo semua akun\n"
-        f"📅 /hariini — pengeluaran hari ini\n"
-        f"📈 /mingguini — 7 hari terakhir\n"
-        f"🏆 /terbesar — top 10 pengeluaran\n"
-        f"🔍 /analisa — Oliv baca pola keuanganmu\n"
-        f"💰 /budget — cek status budget bulan ini\n"
-        f"📋 /terakhir — 10 transaksi terakhir\n"
-        f"🤖 /tanya — tanya Oliv soal keuanganmu\n"
-        f"💎 /networth — snapshot net worth\n"
-        f"📊 /forecast — prediksi akhir bulan\n"
-        f"🎯 /goal — catat goal tabungan\n"
-        f"💰 /tabung — nabung ke goal\n"
-        f"📈 /invest — catat investasi\n"
-        f"📋 /utang — catat utang\n"
-        f"📋 /piutang — catat piutang\n"
-        f"🏠 /aset — catat aset\n"
-        f"❓ /help — bantuan\n\n"
-        f"Yuk mulai catat keuanganmu, {name}! 💪",
+        f"Halo *{name}!* 👋 Aku *{BOT_NAME}*.\n\n"
+        "Aku fokus untuk mencatat keuanganmu:\n"
+        "• Pengeluaran — _beli kopi 15rb_\n"
+        "• Pemasukan — _gajian 5 juta_\n"
+        "• Transfer — _transfer 100rb dari BCA ke GoPay_\n"
+        "• Scan struk — kirim foto struk yang jelas.\n"
+        "• Voice — kirim pesan suara untuk dicatat. 🎙️\n\n"
+        "Semua transaksi akan masuk ke Google Sheets. 📝",
         parse_mode="Markdown",
     )
-
-
 @require_auth
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await start(update, context)
@@ -603,35 +579,15 @@ async def list_sheets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def post_init(app) -> None:
-    """Set bot commands in Telegram."""
+    """Publish only the commands supported by the recorder-only Oliv bot."""
     commands = [
         BotCommand("start", "Mulai bot Oliv"),
-        BotCommand("help", "Bantuan & daftar perintah"),
+        BotCommand("help", "Panduan penggunaan Oliv"),
         BotCommand("pengeluaran", "Catat pengeluaran manual"),
         BotCommand("pemasukan", "Catat pemasukan manual"),
-        BotCommand("ringkasan", "Ringkasan keuangan bulan ini"),
-        BotCommand("saldo", "Cek saldo semua akun"),
-        BotCommand("hariini", "Pengeluaran hari ini"),
-        BotCommand("mingguini", "7 hari terakhir"),
-        BotCommand("terbesar", "Top 10 pengeluaran"),
-        BotCommand("analisa", "Analisa pola keuangan (AI)"),
-        BotCommand("budget", "Status budget bulan ini"),
-        BotCommand("terakhir", "10 transaksi terakhir"),
-        BotCommand("tanya", "Tanya Oliv soal keuangan (AI)"),
-        BotCommand("networth", "Snapshot net worth"),
-        BotCommand("forecast", "Prediksi pengeluaran akhir bulan"),
-        BotCommand("invest", "Catat investasi/beli saham"),
-        BotCommand("dividen", "Catat dividen diterima"),
-        BotCommand("jual", "Catat jual investasi"),
-        BotCommand("utang", "Catat utang"),
-        BotCommand("piutang", "Catat piutang"),
-        BotCommand("goal", "Buat target tabungan"),
-        BotCommand("tabung", "Nabung ke goal"),
-        BotCommand("aset", "Catat pembelian aset"),
-        BotCommand("sheets", "Lihat semua spreadsheet"),
     ]
     await app.bot.set_my_commands(commands)
-    logger.info("Bot commands set.")
+    logger.info("Recorder-only bot commands set.")
 
 
 def _rp(amount) -> str:

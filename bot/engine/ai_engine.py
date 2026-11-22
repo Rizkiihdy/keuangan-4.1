@@ -454,7 +454,7 @@ class AIEngine:
         )
 
     def _generate_vision(self, image_bytes: bytes, mime_type: str, prompt: str) -> str:
-        """Call vision models with fallback; distinguish missing models from rate limits."""
+        """Call vision models with bounded retries for transient 5xx/503 overloads."""
         client = self._get_client()
         parts = [
             genai_types.Part(
@@ -464,27 +464,45 @@ class AIEngine:
         ]
         failures = []
         for model in VISION_MODELS:
-            try:
-                result = client.models.generate_content(model=model, contents=parts).text
-                if not result:
-                    raise RuntimeError(f"Gemini returned an empty vision response from {model}.")
-                logger.info(f"Vision model used: {model}")
-                return result
-            except genai_errors.ClientError as e:
-                err = str(e)
-                failures.append((model, err))
-                if "429" in err:
-                    delay = _parse_retry_delay(err)
-                    logger.warning(f"Gemini vision rate/quota limit on {model}, retry_delay={delay}s; trying fallback.")
-                    continue
-                if "404" in err:
-                    logger.error(f"Gemini vision model unavailable for this project: {model}; response={err}")
-                    continue
-                logger.exception(f"Gemini vision request rejected by {model}: {err}")
-                raise
-            except Exception as e:
-                logger.exception(f"Gemini vision error on {model}: {e}")
-                raise
+            # Retry transient server overloads on the same model with backoff,
+            # then move to the next model rather than failing the receipt scan.
+            for attempt in range(3):
+                try:
+                    result = client.models.generate_content(model=model, contents=parts).text
+                    if not result:
+                        raise RuntimeError(f"Gemini returned an empty vision response from {model}.")
+                    logger.info("Vision model used: %s", model)
+                    return result
+                except genai_errors.ServerError as e:
+                    code = getattr(e, "code", None)
+                    err = str(e)
+                    failures.append((model, err))
+                    if code in (500, 502, 503, 504) and attempt < 2:
+                        delay = 2 ** attempt
+                        logger.warning(
+                            "Gemini vision transient server error on %s (HTTP %s); "
+                            "retry %s/2 in %ss.",
+                            model, code, attempt + 1, delay,
+                        )
+                        import time
+                        time.sleep(delay)
+                        continue
+                    logger.warning(
+                        "Gemini vision server error on %s after %s attempt(s); trying fallback model. %s",
+                        model, attempt + 1, err,
+                    )
+                    break
+                except genai_errors.ClientError as e:
+                    err = str(e)
+                    failures.append((model, err))
+                    if "429" in err or "404" in err:
+                        logger.warning("Gemini vision model %s unavailable/rate-limited; trying fallback. %s", model, err)
+                        break
+                    logger.exception("Gemini vision request rejected by %s: %s", model, err)
+                    raise
+                except Exception as e:
+                    logger.exception("Gemini vision error on %s: %s", model, e)
+                    raise
 
         if failures and all("429" in err for _, err in failures):
             raise QuotaExhaustedError(
@@ -493,8 +511,8 @@ class AIEngine:
             )
         details = " | ".join(f"{model}: {err}" for model, err in failures)
         raise RuntimeError(
-            "Semua model vision Gemini gagal; kegagalan bukan semata-mata kuota. "
-            f"Periksa model/project/API access. Detail: {details}"
+            "Semua model vision Gemini gagal setelah retry/fallback. "
+            f"Periksa ketersediaan layanan/model. Detail: {details}"
         )
 
     @staticmethod
